@@ -24,7 +24,7 @@ from bot.keyboards import (
     plan_days_kb,
     reels_kb,
 )
-from bot.llm import LLM
+from bot.llm import LLM, TranscriptionUnavailable
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -151,6 +151,9 @@ async def post_voice(message: Message, state: FSMContext, db: Database, llm: LLM
     await message.bot.download(message.voice, destination=buf)
     try:
         text = await llm.transcribe(buf.getvalue(), "voice.ogg")
+    except TranscriptionUnavailable:
+        await status.edit_text("Распознавание голоса в этой конфигурации недоступно, напиши текстом 🙏")
+        return
     except Exception:
         log.exception("Transcription failed")
         await status.edit_text("Не смогла разобрать голосовое, напиши текстом 🙏")

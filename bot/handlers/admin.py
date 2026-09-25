@@ -7,6 +7,7 @@ from aiogram.types import Message
 
 from bot.config import settings
 from bot.db import Database
+from bot.llm import LLMRouter
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -31,6 +32,30 @@ async def cmd_grant(message: Message, command: CommandObject, db: Database) -> N
         await message.bot.send_message(user_id, f"👑 Подписка активна до {until:%d.%m.%Y}. Хорошей работы!")
     except TelegramAPIError:
         log.warning("Could not notify user %s about premium", user_id)
+
+
+@router.message(Command("llm"))
+async def cmd_llm(message: Message, command: CommandObject, db: Database, llm: LLMRouter) -> None:
+    args = (command.args or "").split()
+    if not args:
+        lines = [f"Сейчас: <b>{llm.describe()}</b>\n", "Доступные провайдеры:"]
+        for p in llm.providers.values():
+            mark = "▶️" if p.name == llm.active_name else ("✅" if p.ready else "🔒")
+            lines.append(f"{mark} <code>{p.name}</code> — {p.title} ({p.default_model})")
+        lines.append("\nПереключить: <code>/llm &lt;provider&gt; [model]</code>")
+        lines.append("🔒 — нет ключа в .env, будет демо-режим.")
+        await message.answer("\n".join(lines))
+        return
+    name = args[0].lower()
+    model = args[1] if len(args) > 1 else None
+    if name not in llm.providers:
+        await message.answer(f"Не знаю провайдера <code>{name}</code>. Список: /llm")
+        return
+    llm.switch(name, model)
+    await db.set_setting("llm_provider", name)
+    await db.set_setting("llm_model", model or "")
+    note = "" if llm.providers[name].ready else "\n⚠️ Ключа нет — работает демо-заглушка."
+    await message.answer(f"Переключила на <b>{llm.describe()}</b>{note}")
 
 
 @router.message(Command("stats"))

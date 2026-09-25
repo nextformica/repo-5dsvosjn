@@ -74,6 +74,30 @@ async def test_admin_grant_and_tariff(harness: Harness) -> None:
     assert "Премиум: 1" in harness.bot.all_texts()
 
 
+async def test_admin_switches_llm_provider(harness: Harness) -> None:
+    admin = Harness(harness.bot, harness.dp, user_id=999)
+    await admin.send("/llm")
+    texts = harness.bot.all_texts()
+    assert "MockLLM" in texts and "deepseek" in texts and "ollama" in texts
+
+    await admin.send("/llm deepseek deepseek-reasoner")
+    assert "Переключила на <b>DeepSeek · deepseek-reasoner</b>" in harness.bot.all_texts()
+    assert await harness.dp["db"].get_setting("llm_provider") == "deepseek"
+    assert await harness.dp["db"].get_setting("llm_model") == "deepseek-reasoner"
+
+    harness.bot.calls.clear()
+    await admin.send("/llm gemini")
+    assert "Ключа нет" in harness.bot.all_texts()
+
+    harness.bot.calls.clear()
+    await admin.send("/llm nope")
+    assert "Не знаю провайдера" in harness.bot.all_texts()
+
+    harness.bot.calls.clear()
+    await harness.send("/llm deepseek")
+    assert "Переключила" not in harness.bot.all_texts()
+
+
 async def test_non_admin_cannot_grant(harness: Harness) -> None:
     await onboard(harness)
     harness.bot.calls.clear()

@@ -9,6 +9,8 @@ import pytest
 os.environ.setdefault("BOT_TOKEN", "42:TEST")
 os.environ.setdefault("FREE_GENERATIONS", "3")
 os.environ.setdefault("ADMIN_IDS", "999")
+os.environ.setdefault("LLM_PROVIDER", "openai")
+os.environ.setdefault("DEEPSEEK_API_KEY", "sk-test")
 
 from aiogram import Bot, Dispatcher  # noqa: E402
 from aiogram.client.default import DefaultBotProperties  # noqa: E402
@@ -24,9 +26,11 @@ from aiogram.types import (  # noqa: E402
     User,
 )
 
+from bot.config import settings  # noqa: E402
 from bot.db import Database  # noqa: E402
 from bot.handlers import build_router  # noqa: E402
-from bot.llm import MockLLM  # noqa: E402
+from bot.llm import LLMRouter  # noqa: E402
+from bot.providers import build_providers  # noqa: E402
 
 
 class FakeBot(Bot):
@@ -93,7 +97,6 @@ class Harness:
 @pytest.fixture(scope="session")
 def dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
-    dp["llm"] = MockLLM()
     dp.include_router(build_router())
     return dp
 
@@ -103,6 +106,8 @@ async def harness(tmp_path: Path, dispatcher: Dispatcher) -> AsyncIterator[Harne
     db = Database(str(tmp_path / "test.db"))
     await db.init()
     dispatcher["db"] = db
+    # openai без ключа → MockLLM; deepseek с фейковым ключом даёт проверить переключение
+    dispatcher["llm"] = LLMRouter(build_providers(settings), settings.llm_provider)
     storage = dispatcher.storage
     assert isinstance(storage, MemoryStorage)
     storage.storage.clear()

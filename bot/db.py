@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS generations (
     result     TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -117,6 +121,21 @@ class Database:
             )
             await db.commit()
         return until
+
+    async def get_setting(self, key: str) -> str | None:
+        async with aiosqlite.connect(self._path) as db:
+            async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cur:
+                row = await cur.fetchone()
+        return str(row[0]) if row else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        async with aiosqlite.connect(self._path) as db:
+            await db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            await db.commit()
 
     async def stats(self) -> dict[str, int]:
         async with aiosqlite.connect(self._path) as db:

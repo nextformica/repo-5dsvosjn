@@ -21,7 +21,7 @@
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # заполнить BOT_TOKEN, LLM_API_KEY, ADMIN_IDS
+cp .env.example .env   # заполнить BOT_TOKEN, ключи LLM, ADMIN_IDS
 python -m bot.main
 ```
 
@@ -37,16 +37,42 @@ docker compose up -d --build
 | Переменная | Описание |
 |---|---|
 | `BOT_TOKEN` | токен от [@BotFather](https://t.me/BotFather) |
-| `LLM_API_KEY` | ключ LLM. Пусто → режим демо (`MockLLM`), бот отдаёт заглушки, но вся логика работает |
-| `LLM_BASE_URL` | любой OpenAI-совместимый endpoint: OpenAI, OpenRouter (работает из РФ), DeepSeek… |
-| `LLM_MODEL` | модель, по умолчанию `gpt-4o-mini` |
+| `LLM_PROVIDER` | провайдер по умолчанию: `openai` / `gemini` / `deepseek` / `openrouter` / `ollama` / `lmstudio` / `custom` |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` | ключи провайдеров — можно задать несколько и переключаться |
+| `OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL` | адреса локальных серверов (ключ не нужен) |
+| `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` | общий ключ-фолбэк, переопределение модели, произвольный OpenAI-совместимый endpoint (`custom`) |
 | `FREE_GENERATIONS` | размер триала |
 | `ADMIN_IDS` | Telegram user_id админов через запятую (узнать: [@userinfobot](https://t.me/userinfobot)) |
 | `PAYMENT_CONTACT` | куда писать за оплатой, пока нет эквайринга |
 | `DB_PATH` | путь к SQLite (по умолчанию `data/bot.db`) |
 
-Голосовые сообщения расшифровываются через `whisper-1` того же endpoint — на OpenRouter/DeepSeek
-транскрипции нет, в этом случае бот попросит написать текстом.
+### Провайдеры LLM и переключение
+
+Все провайдеры ходят через один OpenAI-совместимый клиент (пресеты — в `bot/providers.py`):
+
+| Провайдер | Модель по умолчанию | Зачем |
+|---|---|---|
+| `ollama` | `llama3.1` | разработка бесплатно локально: `ollama pull llama3.1` |
+| `lmstudio` | модель, загруженная в LM Studio | то же, через GUI (Developer → Start Server) |
+| `deepseek` | `deepseek-chat` | дёшево и хорошо по-русски, для тестов спроса |
+| `openrouter` | `openai/gpt-4o-mini` | любые модели одним ключом, работает из РФ |
+| `gemini` | `gemini-2.0-flash` | Google, большой бесплатный лимит |
+| `openai` | `gpt-4o-mini` | прод + единственный, кто распознаёт голосовые (`whisper-1`) |
+
+Админ переключает провайдера прямо в Telegram, без рестарта:
+
+```
+/llm                      — что активно, у кого есть ключ
+/llm deepseek             — переключиться на DeepSeek с моделью по умолчанию
+/llm ollama qwen2.5:7b    — локальная модель с явным именем
+/llm openai gpt-4o        — продакшен
+```
+
+Выбор сохраняется в SQLite и переживает рестарт. Типичный путь: разработка на Ollama/DeepSeek → купили подписку →
+добавили `OPENAI_API_KEY` в `.env` → `/llm openai`.
+
+Голосовые сообщения расшифровывает `whisper-1`: если активен не OpenAI, но `OPENAI_API_KEY` задан — бот использует его
+только для распознавания; иначе попросит написать текстом.
 
 ### Команды
 
@@ -54,6 +80,7 @@ docker compose up -d --build
 
 Админ (только `ADMIN_IDS`):
 - `/grant <user_id> [days=30]` — включить премиум вручную (ID мастер видит при нажатии на тариф);
+- `/llm [provider] [model]` — посмотреть / переключить LLM-провайдера;
 - `/stats` — пользователи / прошли онбординг / генераций / премиум.
 
 ## Где что лежит
@@ -63,14 +90,15 @@ bot/
   main.py          точка входа, polling
   config.py        настройки из .env
   db.py            SQLite: users, generations (лог всех запросов — пригодится для анализа спроса)
-  llm.py           OpenAI-совместимый клиент + MockLLM
+  providers.py     пресеты OpenAI / Gemini / DeepSeek / OpenRouter / Ollama / LM Studio
+  llm.py           OpenAI-совместимый клиент, MockLLM, LLMRouter (переключение на лету)
   prompts.py       ВСЕ системные промпты — править здесь, код трогать не нужно
   keyboards.py     кнопки меню и inline-клавиатуры
   handlers/
     onboarding.py  /start, анкета: ниша → tone of voice → услуги
     generate.py    4 генератора, лимит, «Ещё вариант», голосовые
     subscription.py тарифы, пейволл
-    admin.py       /grant, /stats
+    admin.py       /grant, /llm, /stats
 tests/             сквозные тесты через фейковый Bot (без сети): pytest
 ```
 
