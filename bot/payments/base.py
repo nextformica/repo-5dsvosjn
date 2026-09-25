@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
 from bot.db import Payment
@@ -25,6 +26,18 @@ class WebhookResult:
     paid: bool
     payment_id: int | None = None
     external_id: str | None = None
+    amount: int | None = None  # сколько реально заплатили (рубли), если платёжка сообщает
+
+
+def rubles(value: object) -> int | None:
+    """'990.00' / 990 / 990.5 → целые рубли; None — если не число или не кратно рублю."""
+    try:
+        d = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    if not d.is_finite() or d != d.to_integral_value():
+        return None
+    return int(d)
 
 
 class PaymentError(Exception):

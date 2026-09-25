@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlencode
 import httpx
 
 from bot.db import Payment
-from bot.payments.base import CreatedPayment, PaymentError, Plan, WebhookResult
+from bot.payments.base import CreatedPayment, PaymentError, Plan, WebhookResult, rubles
 
 log = logging.getLogger(__name__)
 PAY_URL = "https://auth.robokassa.ru/Merchant/Index.aspx"
@@ -69,9 +69,13 @@ class RobokassaProvider:
             resp = await client.get(OPSTATE_URL, params=params)
         if resp.status_code >= 400:
             raise PaymentError(f"Robokassa {resp.status_code}: {resp.text[:300]}")
-        root = ET.fromstring(resp.text)
+        try:
+            root = ET.fromstring(resp.text)
+        except ET.ParseError as e:
+            raise PaymentError(f"Robokassa: bad OpStateExt response: {resp.text[:200]}") from e
         state = root.find(f"{NS}State/{NS}Code")
-        return state is not None and state.text == "100"
+        amount = rubles(root.findtext(f"{NS}Info/{NS}OutSum", default=str(payment.amount)))
+        return state is not None and state.text == "100" and amount == payment.amount
 
     async def parse_webhook(
         self, headers: dict[str, str], body: bytes, query: dict[str, str]
@@ -83,16 +87,15 @@ class RobokassaProvider:
             params.get("InvId"),
             params.get("SignatureValue", ""),
         )
-        if not (out_sum and inv_id and signature):
+        if not (self.ready and out_sum and inv_id and signature):
             return None
         expected = self._sign(out_sum, inv_id, self._p2)
         if expected.lower() != signature.lower():
             log.warning("Robokassa webhook: bad signature for InvId=%s", inv_id)
             return None
-        try:
-            return WebhookResult(paid=True, payment_id=int(inv_id))
-        except ValueError:
+        if not inv_id.isdigit():
             return None
+        return WebhookResult(paid=True, payment_id=int(inv_id), amount=rubles(out_sum))
 
     def webhook_ok_response(self, result: WebhookResult) -> str:
         return f"OK{result.payment_id}"

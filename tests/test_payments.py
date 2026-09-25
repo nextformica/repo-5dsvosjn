@@ -185,10 +185,72 @@ async def test_robokassa_link_and_result_url() -> None:
 
     good_sig = hashlib.md5(b"990.00:7:pass2").hexdigest().upper()
     result = await rk.parse_webhook({}, f"OutSum=990.00&InvId=7&SignatureValue={good_sig}".encode(), {})
-    assert result == WebhookResult(paid=True, payment_id=7)
+    assert result == WebhookResult(paid=True, payment_id=7, amount=990)
     assert rk.webhook_ok_response(result) == "OK7"
     assert await rk.parse_webhook({}, b"OutSum=990.00&InvId=7&SignatureValue=deadbeef", {}) is None
     assert await rk.parse_webhook({}, b"OutSum=1.00&InvId=7&SignatureValue=" + good_sig.encode(), {}) is None
+    assert await rk.parse_webhook({}, f"OutSum=990.00&InvId=x&SignatureValue={good_sig}".encode(), {}) is None
+
+    unconfigured = RobokassaProvider("", "", "")
+    empty_sig = hashlib.md5(b"990.00:7:").hexdigest()
+    assert not unconfigured.ready
+    body = f"OutSum=990.00&InvId=7&SignatureValue={empty_sig}".encode()
+    assert await unconfigured.parse_webhook({}, body, {}) is None
+
+
+async def test_webhook_rejects_wrong_amount_provider_and_unconfigured(harness: Harness) -> None:
+    await onboard(harness)
+    fake = FakeAcquirer()
+    payments = payments_of(harness)
+    payments.providers["fake"] = fake
+    payments.switch("fake")
+    await harness.click("buy:unlimited")  # payment #1, provider=fake, 2490 ₽
+    db = db_of(harness)
+
+    app = build_app(db, payments, None)
+    async with TestClient(TestServer(app)) as client:
+        # Подписанный вебхук Robokassa не активирует счёт другого провайдера.
+        sig = hashlib.md5(b"2490.00:1:pass2").hexdigest()
+        r = await client.post("/webhook/robokassa", data=f"OutSum=2490.00&InvId=1&SignatureValue={sig}")
+        assert r.status == 200
+        p = await db.get_payment(1)
+        assert p is not None and not p.is_paid
+
+        # Недоплата по подписанному вебхуку не активирует счёт.
+        rk = await db.create_payment(1, "unlimited", 2490, "robokassa")
+        sig = hashlib.md5(f"1.00:{rk.id}:pass2".encode()).hexdigest()
+        r = await client.post("/webhook/robokassa", data=f"OutSum=1.00&InvId={rk.id}&SignatureValue={sig}")
+        assert r.status == 200
+        p = await db.get_payment(rk.id)
+        assert p is not None and not p.is_paid
+
+        sig = hashlib.md5(f"2490.00:{rk.id}:pass2".encode()).hexdigest()
+        r = await client.post("/webhook/robokassa", data=f"OutSum=2490.00&InvId={rk.id}&SignatureValue={sig}")
+        assert r.status == 200 and await r.text() == f"OK{rk.id}"
+        p = await db.get_payment(rk.id)
+        assert p is not None and p.is_paid
+
+        # Провайдер без ключей и manual не принимают вебхуки вообще; кривой JSON → 403, не 500.
+        assert (await client.post("/webhook/yookassa", data="{}")).status == 404
+        assert (await client.post("/webhook/manual", data="x")).status == 404
+        pg_headers = {"X-MerchantId": "m-1", "X-Secret": "s-1"}
+        assert (await client.post("/webhook/platega", data="[1,2]", headers=pg_headers)).status == 403
+        assert (await client.post("/webhook/platega", data="null", headers=pg_headers)).status == 403
+
+    user = await db.get_user(1)
+    assert user is not None and user.is_premium
+
+
+async def test_bad_callback_data_is_handled(harness: Harness) -> None:
+    await onboard(harness)
+    harness.bot.calls.clear()
+    for data in ("check:abc", "check:", "check:1:2", "check:" + "9" * 50, "buy:vip"):
+        await harness.click(data)
+    assert await db_of(harness).get_payment(1) is None
+    alerts = [
+        m.text for m in harness.bot.calls if type(m).__name__ == "AnswerCallbackQuery" and m.text is not None
+    ]
+    assert alerts.count("Счёт не найден") == 4 and alerts.count("Такого тарифа нет") == 1
 
 
 async def test_platega_webhook_requires_merchant_headers() -> None:
@@ -196,7 +258,7 @@ async def test_platega_webhook_requires_merchant_headers() -> None:
     body = b'{"id": "tx-1", "amount": 990, "currency": "RUB", "status": "CONFIRMED", "paymentMethod": 2}'
     assert await pg.parse_webhook({"X-MerchantId": "m-1", "X-Secret": "wrong"}, body, {}) is None
     ok = await pg.parse_webhook({"x-merchantid": "m-1", "x-secret": "s-1"}, body, {})
-    assert ok == WebhookResult(paid=True, external_id="tx-1")
+    assert ok == WebhookResult(paid=True, external_id="tx-1", amount=990)
     canceled = await pg.parse_webhook(
         {"X-MerchantId": "m-1", "X-Secret": "s-1"}, body.replace(b"CONFIRMED", b"CANCELED"), {}
     )

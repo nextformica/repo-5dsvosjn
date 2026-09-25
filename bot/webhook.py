@@ -17,7 +17,7 @@ def build_app(db: Database, payments: PaymentRouter, bot: Bot | None) -> web.App
 
     async def webhook(request: web.Request) -> web.Response:
         provider = payments.providers.get(request.match_info["provider"])
-        if provider is None:
+        if provider is None or not provider.ready or provider.name == "manual":
             raise web.HTTPNotFound()
         body = await request.read()
         result = await provider.parse_webhook(dict(request.headers), body, dict(request.query))

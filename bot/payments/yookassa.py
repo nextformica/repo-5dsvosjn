@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from bot.db import Payment
-from bot.payments.base import CreatedPayment, PaymentError, Plan, WebhookResult
+from bot.payments.base import CreatedPayment, PaymentError, Plan, WebhookResult, rubles
 
 log = logging.getLogger(__name__)
 API = "https://api.yookassa.ru/v3"
@@ -48,33 +48,41 @@ class YooKassaProvider:
         data = resp.json()
         return CreatedPayment(url=data["confirmation"]["confirmation_url"], external_id=data["id"])
 
-    async def _fetch_status(self, external_id: str) -> str:
+    async def _fetch(self, external_id: str) -> tuple[str, int | None]:
+        """(status, сумма в рублях) платежа по API ЮKassa."""
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(f"{API}/payments/{external_id}", auth=self._auth)
         if resp.status_code >= 400:
             raise PaymentError(f"YooKassa {resp.status_code}: {resp.text[:300]}")
-        return str(resp.json().get("status", ""))
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise PaymentError(f"YooKassa: unexpected response {resp.text[:200]}")
+        amount = data.get("amount")
+        return str(data.get("status", "")), rubles(amount.get("value")) if isinstance(amount, dict) else None
 
     async def is_paid(self, payment: Payment) -> bool:
         if not payment.external_id:
             return False
-        return await self._fetch_status(payment.external_id) == "succeeded"
+        status, amount = await self._fetch(payment.external_id)
+        return status == "succeeded" and amount == payment.amount
 
     async def parse_webhook(
         self, headers: dict[str, str], body: bytes, query: dict[str, str]
     ) -> WebhookResult | None:
         # Уведомления ЮKassa не подписаны — доверяем только статусу, перепрошенному по API.
+        if not self.ready:
+            return None
         try:
             data = json.loads(body)
             external_id = str(data["object"]["id"])
         except (ValueError, KeyError, TypeError):
             return None
         try:
-            status = await self._fetch_status(external_id)
-        except (PaymentError, httpx.HTTPError):
+            status, amount = await self._fetch(external_id)
+        except (PaymentError, httpx.HTTPError, ValueError):
             log.exception("YooKassa webhook: cannot verify %s", external_id)
             return None
-        return WebhookResult(paid=status == "succeeded", external_id=external_id)
+        return WebhookResult(paid=status == "succeeded", external_id=external_id, amount=amount)
 
     def webhook_ok_response(self, result: WebhookResult) -> str:
         return "OK"

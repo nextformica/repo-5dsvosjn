@@ -9,7 +9,7 @@ import logging
 import httpx
 
 from bot.db import Payment
-from bot.payments.base import CreatedPayment, PaymentError, Plan, WebhookResult
+from bot.payments.base import CreatedPayment, PaymentError, Plan, WebhookResult, rubles
 
 log = logging.getLogger(__name__)
 API = "https://app.platega.io"
@@ -44,7 +44,9 @@ class PlategaProvider:
         if resp.status_code >= 400:
             raise PaymentError(f"Platega {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
-        return CreatedPayment(url=data["redirect"], external_id=str(data["transactionId"]))
+        if not isinstance(data, dict) or "redirect" not in data or "transactionId" not in data:
+            raise PaymentError(f"Platega: unexpected response {resp.text[:200]}")
+        return CreatedPayment(url=str(data["redirect"]), external_id=str(data["transactionId"]))
 
     async def is_paid(self, payment: Payment) -> bool:
         if not payment.external_id:
@@ -53,21 +55,34 @@ class PlategaProvider:
             resp = await client.get(f"{API}/transaction/{payment.external_id}", headers=self._headers())
         if resp.status_code >= 400:
             raise PaymentError(f"Platega {resp.status_code}: {resp.text[:300]}")
-        return str(resp.json().get("status")) == "CONFIRMED"
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise PaymentError(f"Platega: unexpected response {resp.text[:200]}")
+        details = data.get("paymentDetails")
+        amount = rubles(details.get("amount")) if isinstance(details, dict) else None
+        if amount is None:
+            amount = rubles(data.get("amount", payment.amount))
+        return data.get("status") == "CONFIRMED" and amount == payment.amount
 
     async def parse_webhook(
         self, headers: dict[str, str], body: bytes, query: dict[str, str]
     ) -> WebhookResult | None:
         # Platega подписывает вебхук теми же заголовками, что и наши запросы к ней.
         h = {k.lower(): v for k, v in headers.items()}
-        if h.get("x-merchantid") != self._merchant_id or h.get("x-secret") != self._secret:
+        if not self.ready or h.get("x-merchantid") != self._merchant_id or h.get("x-secret") != self._secret:
             log.warning("Platega webhook: bad credentials")
             return None
         try:
             data = json.loads(body)
-            return WebhookResult(paid=data.get("status") == "CONFIRMED", external_id=str(data["id"]))
-        except (ValueError, KeyError, TypeError):
+        except ValueError:
             return None
+        if not isinstance(data, dict) or "id" not in data:
+            return None
+        return WebhookResult(
+            paid=data.get("status") == "CONFIRMED",
+            external_id=str(data["id"]),
+            amount=rubles(data.get("amount")) if "amount" in data else None,
+        )
 
     def webhook_ok_response(self, result: WebhookResult) -> str:
         return "OK"

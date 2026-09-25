@@ -42,8 +42,17 @@ async def handle_webhook(
         payment = await db.get_payment_by_external_id(provider.name, result.external_id)
     else:
         payment = None
-    if payment is None:
+    if payment is None or payment.provider != provider.name:
         log.warning("%s webhook: unknown payment %s", provider.name, result)
+        return
+    if result.amount is not None and result.amount != payment.amount:
+        log.warning(
+            "%s webhook: amount %s != %s for payment %s",
+            provider.name,
+            result.amount,
+            payment.amount,
+            payment.id,
+        )
         return
     if result.paid:
         await activate_payment(payment, db, bot)

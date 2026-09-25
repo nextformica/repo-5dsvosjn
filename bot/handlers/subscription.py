@@ -51,7 +51,10 @@ async def cmd_tariff(message: Message, db: Database) -> None:
 @router.callback_query(F.data.startswith("buy:"))
 async def buy(cb: CallbackQuery, db: Database, payments: PaymentRouter) -> None:
     assert cb.data is not None and isinstance(cb.message, Message)
-    plan = PLANS.get(cb.data.split(":", 1)[1], PLANS["basic"])
+    plan = PLANS.get(cb.data.split(":", 1)[1])
+    if plan is None:
+        await cb.answer("Такого тарифа нет", show_alert=True)
+        return
     plan_text = f"{plan.title} ({plan.amount} ₽/мес)"
     await db.get_or_create_user(cb.from_user.id, cb.from_user.username)
 
@@ -68,7 +71,7 @@ async def buy(cb: CallbackQuery, db: Database, payments: PaymentRouter) -> None:
     payment = await db.create_payment(cb.from_user.id, plan.code, plan.amount, provider.name)
     try:
         created = await provider.create(payment, plan, payments.return_url)
-    except (PaymentError, httpx.HTTPError, KeyError, ValueError):
+    except (PaymentError, httpx.HTTPError, KeyError, ValueError, TypeError):
         log.exception("Payment creation failed (%s)", provider.name)
         await cb.message.answer(
             "Не получилось создать счёт 😔 Попробуй ещё раз через минуту "
@@ -89,7 +92,8 @@ async def buy(cb: CallbackQuery, db: Database, payments: PaymentRouter) -> None:
 @router.callback_query(F.data.startswith("check:"))
 async def check_payment(cb: CallbackQuery, db: Database, payments: PaymentRouter) -> None:
     assert cb.data is not None and isinstance(cb.message, Message)
-    payment = await db.get_payment(int(cb.data.split(":", 1)[1]))
+    raw_id = cb.data.split(":", 1)[1]
+    payment = await db.get_payment(int(raw_id)) if raw_id.isdigit() and len(raw_id) < 18 else None
     if payment is None or payment.user_id != cb.from_user.id:
         await cb.answer("Счёт не найден", show_alert=True)
         return
@@ -98,10 +102,16 @@ async def check_payment(cb: CallbackQuery, db: Database, payments: PaymentRouter
         await cb.message.answer(remaining_text(user) if user else "Оплачено ✅", reply_markup=main_menu())
         await cb.answer()
         return
-    provider = payments.providers[payment.provider]
+    provider = payments.providers.get(payment.provider)
+    if provider is None or not provider.ready:
+        await cb.answer(
+            f"Этот способ оплаты сейчас отключён. Напиши {settings.payment_contact}, разберёмся вручную.",
+            show_alert=True,
+        )
+        return
     try:
         paid = await provider.is_paid(payment)
-    except (PaymentError, httpx.HTTPError, ValueError):
+    except (PaymentError, httpx.HTTPError, ValueError, KeyError, TypeError):
         log.exception("Payment check failed (%s)", provider.name)
         await cb.answer("Платёжка не отвечает, попробуй через минуту", show_alert=True)
         return
