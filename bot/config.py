@@ -26,8 +26,27 @@ class Settings(BaseSettings):
 
     free_generations: int = 3
     admin_ids: Annotated[list[int], NoDecode] = []
-    payment_contact: str = "@your_username"
     db_path: str = "data/bot.db"
+
+    # Платежи (см. bot/payments/): manual | yookassa | robokassa | platega; переключается командой /pay.
+    payment_provider: str = "manual"
+    payment_contact: str = "@your_username"
+    subscription_days: int = 30
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
+    yookassa_sbp_only: bool = False
+    robokassa_login: str = ""
+    robokassa_password1: str = ""
+    robokassa_password2: str = ""
+    robokassa_test: bool = False
+    robokassa_hash: str = "md5"
+    robokassa_inc_curr_label: str = ""
+    platega_merchant_id: str = ""
+    platega_secret: str = ""
+    platega_payment_method: int = 2
+    # HTTP-сервер для вебхуков платёжек; 0 — выключен (тогда оплата проверяется кнопкой «Я оплатила»).
+    webhook_port: int = 0
+    webhook_host: str = "0.0.0.0"
 
     @field_validator("admin_ids", mode="before")
     @classmethod

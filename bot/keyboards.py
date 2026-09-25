@@ -63,6 +63,14 @@ def paywall_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def pay_kb(url: str, payment_id: int, amount: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=f"💳 Оплатить {amount} ₽", url=url)
+    b.button(text="✅ Я оплатила", callback_data=f"check:{payment_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def after_result_kb(kind: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🔄 Ещё вариант", callback_data=f"again:{kind}")

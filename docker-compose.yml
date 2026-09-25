@@ -5,3 +5,6 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+    # Вебхуки платёжек: раскомментировать и задать WEBHOOK_PORT=8080 в .env
+    # ports:
+    #   - "8080:8080"

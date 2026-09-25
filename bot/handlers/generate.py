@@ -59,7 +59,7 @@ async def run_generation(
     if not user.onboarded:
         await start_onboarding(message, state)
         return
-    if not user.is_premium and user.generations_used >= settings.free_generations:
+    if not await db.reserve_generation(user.user_id, settings.free_generations):
         await message.answer(PAYWALL, reply_markup=paywall_kb())
         return
 
@@ -70,6 +70,7 @@ async def run_generation(
         result = await llm.generate(prompts.system_prompt(user), build_prompt(kind, user_input))
     except Exception:
         log.exception("LLM generation failed")
+        await db.refund_generation(user.user_id)
         await status.edit_text("Что-то пошло не так, попробуй ещё раз через минуту 🙏")
         return
 

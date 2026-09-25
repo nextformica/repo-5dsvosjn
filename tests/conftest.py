@@ -11,6 +11,13 @@ os.environ.setdefault("FREE_GENERATIONS", "3")
 os.environ.setdefault("ADMIN_IDS", "999")
 os.environ.setdefault("LLM_PROVIDER", "openai")
 os.environ.setdefault("DEEPSEEK_API_KEY", "sk-test")
+os.environ.setdefault("PAYMENT_PROVIDER", "manual")
+os.environ.setdefault("PAYMENT_CONTACT", "@test_admin")
+os.environ.setdefault("ROBOKASSA_LOGIN", "demo")
+os.environ.setdefault("ROBOKASSA_PASSWORD1", "pass1")
+os.environ.setdefault("ROBOKASSA_PASSWORD2", "pass2")
+os.environ.setdefault("PLATEGA_MERCHANT_ID", "m-1")
+os.environ.setdefault("PLATEGA_SECRET", "s-1")
 
 from aiogram import Bot, Dispatcher  # noqa: E402
 from aiogram.client.default import DefaultBotProperties  # noqa: E402
@@ -30,6 +37,7 @@ from bot.config import settings  # noqa: E402
 from bot.db import Database  # noqa: E402
 from bot.handlers import build_router  # noqa: E402
 from bot.llm import LLMRouter  # noqa: E402
+from bot.payments import PaymentRouter, build_payment_providers  # noqa: E402
 from bot.providers import build_providers  # noqa: E402
 
 
@@ -108,6 +116,9 @@ async def harness(tmp_path: Path, dispatcher: Dispatcher) -> AsyncIterator[Harne
     dispatcher["db"] = db
     # openai без ключа → MockLLM; deepseek с фейковым ключом даёт проверить переключение
     dispatcher["llm"] = LLMRouter(build_providers(settings), settings.llm_provider)
+    dispatcher["payments"] = PaymentRouter(
+        build_payment_providers(settings), settings.payment_provider, "https://t.me/test_bot"
+    )
     storage = dispatcher.storage
     assert isinstance(storage, MemoryStorage)
     storage.storage.clear()

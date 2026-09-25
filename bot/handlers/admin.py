@@ -8,6 +8,7 @@ from aiogram.types import Message
 from bot.config import settings
 from bot.db import Database
 from bot.llm import LLMRouter
+from bot.payments import PaymentRouter
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -58,6 +59,30 @@ async def cmd_llm(message: Message, command: CommandObject, db: Database, llm: L
     await message.answer(f"Переключила на <b>{llm.describe()}</b>{note}")
 
 
+@router.message(Command("pay"))
+async def cmd_pay(message: Message, command: CommandObject, db: Database, payments: PaymentRouter) -> None:
+    args = (command.args or "").split()
+    if not args:
+        lines = [f"Сейчас: <b>{payments.active.title}</b>\n", "Способы оплаты:"]
+        for p in payments.providers.values():
+            mark = "▶️" if p.name == payments.active_name else ("✅" if p.ready else "🔒")
+            lines.append(f"{mark} <code>{p.name}</code> — {p.title}")
+        lines.append("\nПереключить: <code>/pay &lt;provider&gt;</code>")
+        lines.append("🔒 — нет ключей в .env.")
+        await message.answer("\n".join(lines))
+        return
+    name = args[0].lower()
+    if name not in payments.providers:
+        await message.answer(f"Не знаю способа <code>{name}</code>. Список: /pay")
+        return
+    if not payments.providers[name].ready:
+        await message.answer(f"У <code>{name}</code> не заполнены ключи в .env — не переключаю.")
+        return
+    payments.switch(name)
+    await db.set_setting("payment_provider", name)
+    await message.answer(f"Оплата теперь через <b>{payments.active.title}</b>")
+
+
 @router.message(Command("stats"))
 async def cmd_stats(message: Message, db: Database) -> None:
     s = await db.stats()
@@ -65,5 +90,6 @@ async def cmd_stats(message: Message, db: Database) -> None:
         f"Пользователей: {s['users']}\n"
         f"Прошли онбординг: {s['onboarded']}\n"
         f"Генераций всего: {s['generations']}\n"
-        f"Премиум: {s['premium']}"
+        f"Премиум: {s['premium']}\n"
+        f"Оплат: {s['paid']} на {s['revenue']} ₽"
     )
