@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: "1:ci"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt ruff mypy pytest pytest-asyncio
+      - run: ruff check bot tests
+      - run: ruff format --check bot tests
+      - run: mypy bot
+      - run: pytest -q
